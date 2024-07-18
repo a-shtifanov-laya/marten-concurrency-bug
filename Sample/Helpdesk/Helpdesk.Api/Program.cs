@@ -11,6 +11,7 @@ using Helpdesk.Api.Incidents.GetIncidentShortInfo;
 using JasperFx.CodeGeneration;
 using Marten;
 using Marten.AspNetCore;
+using Marten.Events;
 using Marten.Events.Daemon.Resiliency;
 using Marten.Events.Projections;
 using Marten.Pagination;
@@ -44,22 +45,25 @@ builder.Services
 
         options.UseSystemTextJsonForSerialization(EnumStorage.AsString);
 
+        options.Projections.DaemonLockId = 1;
         options.Projections.Errors.SkipApplyErrors = false;
         options.Projections.Errors.SkipSerializationErrors = false;
         options.Projections.Errors.SkipUnknownEvents = false;
 
         options.Projections.LiveStreamAggregation<Incident>();
-        options.Projections.Add<IncidentHistoryTransformation>(ProjectionLifecycle.Inline);
-        options.Projections.Add<IncidentDetailsProjection>(ProjectionLifecycle.Inline);
-        options.Projections.Add<IncidentShortInfoProjection>(ProjectionLifecycle.Inline);
-        options.Projections.Add<CustomerIncidentsSummaryProjection>(ProjectionLifecycle.Async);
+        // comment it out because they are not in use in my example
+        // options.Projections.Add<IncidentHistoryTransformation>(ProjectionLifecycle.Inline);
+        // options.Projections.Add<IncidentDetailsProjection>(ProjectionLifecycle.Inline);
+        // options.Projections.Add<IncidentShortInfoProjection>(ProjectionLifecycle.Inline);
+        // options.Projections.Add<CustomerIncidentsSummaryProjection>(ProjectionLifecycle.Async);
+        options.Projections.Snapshot<IncidentProjection>(SnapshotLifecycle.Async);
 
         options.ApplicationAssembly = typeof(CustomerIncidentsSummaryProjection).Assembly;
 
         return options;
     })
-    .AddSubscriptionWithServices<KafkaProducer>(ServiceLifetime.Singleton)
-    .AddSubscriptionWithServices<SignalRProducer<IncidentsHub>>(ServiceLifetime.Singleton)
+    // .AddSubscriptionWithServices<KafkaProducer>(ServiceLifetime.Singleton)
+    // .AddSubscriptionWithServices<SignalRProducer<IncidentsHub>>(ServiceLifetime.Singleton)
     .OptimizeArtifactWorkflow(TypeLoadMode.Static)
     .ApplyAllDatabaseChangesOnStartup()
     .UseLightweightSessions()
@@ -95,6 +99,25 @@ var customersIncidents = app.MapGroup("api/customers/{customerId:guid}/incidents
 var agentIncidents = app.MapGroup("api/agents/{agentId:guid}/incidents/").WithTags("Agent", "Incident");
 var incidents = app.MapGroup("api/incidents").WithTags("Incident");
 
+customersIncidents.MapPost("compare",async (
+    IDocumentSession documentSession,
+    Guid customerId,
+    CancellationToken ct) =>
+{
+
+    await documentSession.DocumentStore.WaitForNonStaleProjectionDataAsync(TimeSpan.FromSeconds(3));
+    var projectionCount = await documentSession
+       .Query<IncidentProjection>()
+       .Where(x => x.CustomerId == customerId)
+       .CountAsync(token: ct);
+    var eventsCount = await documentSession.Events
+       .QueryRawEventDataOnly<IncidentLogged>()
+       .Where(x => x.CustomerId == customerId)
+       .CountAsync(token: ct);
+    if (projectionCount == eventsCount) return Ok();
+
+    return Results.Conflict($"Number of events {eventsCount} does not match number of projections {projectionCount}");
+});
 customersIncidents.MapPost("",
     async (
         IDocumentSession documentSession,
@@ -252,7 +275,7 @@ app.UseSwagger()
 
 
 app.UseCors("ClientPermission");
-app.MapHub<IncidentsHub>("/hubs/incidents");
+// app.MapHub<IncidentsHub>("/hubs/incidents");
 
 return await app.RunOaktonCommands(args);
 

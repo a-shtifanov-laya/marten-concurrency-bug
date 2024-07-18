@@ -25,7 +25,7 @@ services:
         restart: always
 
     postgres:
-        image: postgres:15.1-alpine
+        image: bitnami/postgresql:15
         container_name: postgres
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U postgres"]
