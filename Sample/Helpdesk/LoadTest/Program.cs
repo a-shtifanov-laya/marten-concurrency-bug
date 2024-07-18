@@ -6,7 +6,7 @@ httpClient.BaseAddress = new Uri("http://localhost:5248/api/");
 httpClient.Timeout = TimeSpan.FromSeconds(3);
 
 var customerId = Guid.NewGuid().ToString();
-Console.WriteLine(customerId);
+Console.WriteLine($"Creating incidents for customerId: {customerId}");
 NBomberRunner
    .RegisterScenarios(
         Scenario.Create("Create incident", async _ =>
